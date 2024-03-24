@@ -1,2 +1,2 @@
-Modeling of complex biological systems 24L repository
+Modeling of complex biological systems 24L repository,
 Krzysztof Łuaksz
