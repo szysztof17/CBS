@@ -1,0 +1,312 @@
+------------------------------------------------------------------------
+
+```{r setup, include=FALSE}
+all_times <- list()  # store the time for each chunk
+knitr::knit_hooks$set(time_it = local({
+  now <- NULL
+  function(before, options) {
+    if (before) {
+      now <<- Sys.time()
+    } else {
+      res <- difftime(Sys.time(), now, units = "secs")
+      all_times[[options$label]] <<- res
+    }
+  }
+}))
+knitr::opts_chunk$set(
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 95),
+  message = FALSE,
+  warning = FALSE,
+  time_it = TRUE
+)
+```
+
+```{r}
+memory.limit(999999999)
+```
+# Homework
+
+You need to apply the same analysis pipeline to the bigger dataset published in Zheng et al. 2017, specifically called 'Fresh 68k PBMCs (Donor A)'. If you are not familiar, please read the original paper (listed on the syllabus and the website).
+
+Download the following data on 10X Genomics <https://support.10xgenomics.com/single-cell-gene-expression/datasets>
+
+### Single Cell 3' Paper: Zheng et al. 2017
+
+#### Fresh 68k PBMCs (Donor A)
+
+# Homework Problem 1
+
+Analyze the 68k PBMCs dataset in the same way as presented in the Seurat's guide with PBMC3k. Apply QC, PCA, jackstraw, clustering, and t-SNE to create figure similar to Figure 3b on Zheng et al. 2017. Note that there are differences between Zheng's original analysis and Seurat's analysis. Pay attentions to hyper-parameters that you must choose for this new bigger dataset.
+
+Provide R markdown file with your codes and outputs.
+
+Present the t-SNE visualization with 10 clusters as defined by K-means clustering
+
+Reproduce Figure 3 but note difference in results: <https://www.nature.com/articles/ncomms14049/figures/3>
+
+# Homework Problem 2
+
+Create a hierachical clustering by applying K-means clustering to cells defined by each of 10 cluster. Try to find a suitable number of clusters (k) for each sub-population.
+
+Present
+
+-   overall t-SNE visualization with all clusters -- make sure that hierarchy (group) is visualized.
+-   visualize t-SNE for each of 10 clusters, with their sub-clusters.
+
+For example, Zheng et al. 2017 \> To identify subpopulations within the myeloid population, we further applied k-means clustering on the first 50 PCs of cluster 9 cells
+
+# Note
+
+This lab comes and mostly based on the original tutorial given by Seurat. The original tutorial is available on [here](https://satijalab.org/seurat/articles/pbmc3k_tutorial.html) which may contain more recent updates. Homework problems are at the very end of this document.
+
+# Setup the Seurat Object
+
+
+
+```{r init}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+# for an error: object ‘markvario’ is not exported by 'namespace:spatstat'
+#remotes::install_version("spatstat", version = "1.64-1")
+
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "hg19_zheng/")
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+```
+
+
+
+# Standard pre-processing workflow
+
+
+
+## QC and selecting cells for further analysis
+
+```{r mito, fig.height=7, fig.width=13}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+```
+
+ 
+
+
+-   We filter cells that have unique feature counts over 2,500 or less than 200
+-   We filter cells that have \>5% mitochondrial counts
+
+```{r qc2, fig.height=7, fig.width=13}
+
+#Visualize QC metrics as a violin plot
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size=0.05,alpha=0.1)
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+plot1 + plot2
+
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+------------------------------------------------------------------------
+
+
+# Normalizing the data
+
+
+```{r normalize}
+pbmc <- NormalizeData(pbmc)
+```
+
+# Identification of highly variable features (feature selection)
+
+
+```{r var_features, fig.height=5, fig.width=11}
+pbmc <- FindVariableFeatures(pbmc, selection.method = 'vst', nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+
+------------------------------------------------------------------------
+
+# Scaling the data
+
+
+
+```{r regress, fig.height=7, fig.width=11, results='hide'}
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+```
+
+
+
+------------------------------------------------------------------------
+
+# Perform linear dimensional reduction
+
+Next we perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using `features` argument if you wish to choose a different subset.
+
+```{r pca,results='hide'}
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+```
+
+Seurat provides several useful ways of visualizing both cells and features that define the PCA, including `VizDimReduction()`, `DimPlot()`, and `DimHeatmap()`
+
+```{r pca_viz, message=TRUE}
+# Examine and visualize PCA results a few different ways
+print(pbmc[['pca']], dims = 1:5, nfeatures = 5)
+VizDimLoadings(pbmc, dims = 1:2, reduction = 'pca')
+DimPlot(pbmc, reduction = 'pca')
+```
+
+In particular `DimHeatmap()` allows for easy exploration of the primary sources of heterogeneity in a dataset, and can be useful when trying to decide which PCs to include for further downstream analyses. Both cells and features are ordered according to their PCA scores. Setting `cells` to a number plots the 'extreme' cells on both ends of the spectrum, which dramatically speeds plotting for large datasets. Though clearly a supervised analysis, we find this to be a valuable tool for exploring correlated feature sets.
+
+```{r single-heatmap}
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE)
+```
+
+```{r multi-heatmap, fig.height=15, fig.width=9}
+DimHeatmap(pbmc, dims = 1:20, cells = 500, balanced = TRUE)
+```
+
+# Determine the 'dimensionality' of the dataset
+
+
+```{r jackstraw, fig.height=6, fig.width=10}
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More approximate techniques such as those implemented in ElbowPlot() can be used to reduce cpomputation time
+pbmc <- JackStraw(pbmc, num.replicate = 30)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:20) #thresolding
+```
+
+
+
+```{r jsplots, fig.height=6, fig.width=10}
+JackStrawPlot(pbmc, dims = 1:20)
+```
+
+
+```{r elbow_plot, fig.height=6, fig.width=10}
+ElbowPlot(pbmc)
+```
+
+All 20 PC show enrichment in low p-val features (strong for up to 11th PC), elbow plot shows decrease around 8-14PCs. 10 seems to be a good cut-off value.
+
+------------------------------------------------------------------------
+
+# Cluster the cells
+
+# Problem 1
+
+```{r cluster, fig.height=5, fig.width=7}
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.2)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(pbmc), 5)
+```
+```{r}
+pbmc <- RunTSNE(pbmc, reduction = 'pca', dims=1:10, reduction.name='tsne')
+
+```
+
+```{r}
+library(cowplot)
+library(ggplot2)
+pbmc$kmeans_5 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 5)$cluster
+pbmc$kmeans_10 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 10)$cluster
+pbmc$kmeans_15 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 15)$cluster
+
+DimPlot(pbmc, reduction = "tsne", group.by = "kmeans_5")+ggtitle("kmeans_5")
+DimPlot(pbmc, reduction = "tsne", group.by = "kmeans_10")+ggtitle("kmeans_10")
+DimPlot(pbmc, reduction = "tsne", group.by ="kmeans_15")+ggtitle("kmeans_15")
+
+```
+
+
+------------------------------------------------------------------------
+
+# Run non-linear dimensional reduction (UMAP/tSNE)
+
+
+```{r tsneplot, fig.height=5, fig.width=7}
+# note that you can set `label = TRUE` or use the LabelClusters function to help label individual clusters
+DimPlot(pbmc, reduction = 'tsne', group.by = 'kmeans_10')
+DimPlot(pbmc, reduction = 'tsne')
+
+```
+```{r}
+pdf("Lukasz_problem1.pdf")
+
+ids <- lapply(seq(1,10), function(x){paste(c('Cluster', x), collapse=" ")})
+percentages <- lapply(seq(1,10), function(x) {round(length(pbmc$kmeans_10[(pbmc$kmeans_10 == x)]) / length(pbmc$kmeans_10) * 100, 1)})
+percentages <- lapply(seq(1,10), function(x){paste(c(percentages[x], "%"), collapse = "")})
+ids <- lapply(seq(1,10), function(x){paste(c(ids[x], percentages[x]), collapse = "\n")}) |> as.vector()
+ 
+pbmc_new <- SetIdent(pbmc, value = pbmc@meta.data$kmeans_10)
+names(ids) <- levels(pbmc_new)
+pbmc_new <- RenameIdents(pbmc_new, as.vector(ids))
+DimPlot(pbmc_new, reduction = "tsne", label = TRUE, pt.size = 0.5)  + ggtitle("t-SNE visualization with K=10-means")
+dev.off()
+```
+
+------------------------------------------------------------------------
+# Problem2
+
+```{r}
+clusters <- lapply(seq(0,9), function(x) {subset(pbmc_new, seurat_clusters == x)})
+clusters <- lapply(clusters, function(x) {FindNeighbors(x, dims= 1:10)})
+clusters <- lapply(clusters, function(x) {FindClusters(x, resolution = 0.5)})
+clusters <- lapply(clusters, function(x) {RunTSNE(x, dims = 1:10)})
+
+```
+
+```{r}
+pdf("Lukasz_problem2_kmeans.pdf")
+DimPlot(pbmc_new, reduction = "tsne", label = TRUE, pt.size = 0.5) + NoLegend() + ggtitle("Overall t-SNE visualization with all clusters")
+clusters <- lapply(seq(0,9), function(x) {subset(pbmc_new, seurat_clusters == x)})
+for (i in seq(1:10)){
+    
+  clusters[[i]] <-   RunTSNE(clusters[[i]], dims = 1:10)
+  clusters[[i]]$kmeans_3 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 3)$cluster
+  clusters[[i]]$kmeans_6 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 6)$cluster
+  clusters[[i]]$kmeans_9 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 9)$cluster
+  clusters[[i]]$kmeans_12 <- kmeans(x = pbmc@reductions[["pca"]]@cell.embeddings,centers = 12)$cluster
+  
+  print(DimPlot(clusters[[i]], reduction = "tsne", group.by = "kmeans_3")+ggtitle("kmeans_3"))
+  print(DimPlot(clusters[[i]], reduction = "tsne", group.by = "kmeans_6")+ggtitle("kmeans_6"))
+  print(DimPlot(clusters[[i]], reduction = "tsne", group.by ="kmeans_9")+ggtitle("kmeans_9"))
+  print(DimPlot(clusters[[i]], reduction = "tsne", group.by = "kmeans_12")+ggtitle("kmeans_12"))
+
+  
+  
+}
+dev.off()
+```
+K-means subclustering gives unsatisfactory results - decided to go on with N-Nearest Neighbours from Seurat.
+
+
+```{r}
+clusters <- lapply(seq(0,9), function(x) {subset(pbmc_new, seurat_clusters == x)})
+clusters <- lapply(clusters, function(x) {FindNeighbors(x, dims= 1:10)})
+clusters <- lapply(clusters, function(x) {FindClusters(x, resolution = 0.5)})
+clusters <- lapply(clusters, function(x) {RunTSNE(x, dims = 1:10)})
+```
+
+```{r}
+pdf("Lukasz_problem2.pdf")
+DimPlot(pbmc_new, reduction = "tsne", label = TRUE, pt.size = 0.5) + NoLegend() + ggtitle("t-SNE with all clusters")
+for (i in seq(1:10)){
+  print((DimPlot(clusters[[i]], reduction = "tsne")) + ggtitle(paste("t-SNE for subcluster number: ", i)))
+}
+dev.off()
+```
+
