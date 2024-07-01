@@ -1,0 +1,447 @@
+---
+title: "RNA-Seq muscle sampeles analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Library preperation
+
+```{r, message=FALSE}
+library(dplyr)
+library(GenomicFeatures)
+library(readr)
+library(enrichR)
+library(DESeq2)
+library(ensembldb)
+library(biomaRt)
+library(clusterProfiler)
+library(DOSE)
+
+library(RColorBrewer)
+library(gplots)
+library(plotly)
+library(pheatmap)
+library(ggplot2)
+library(easylabel)
+library(enrichplot)
+library(ggrepel)
+library(stringr)
+
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(pathview)
+library(gage)
+library(gageData)
+library(tximport)
+library(txdbmaker)
+
+```
+## Get nnotation data
+
+```{r, cache=TRUE}
+txdb <- makeTxDbFromGFF("gencode.v46.annotation.gff3")
+k <- keys(txdb, keytype = "TXNAME")
+tx2gene <- AnnotationDbi::select(txdb, k, "GENEID", "TXNAME")
+head(tx2gene)
+```
+
+
+```{r}
+samplesRaw <- read.table("samples.txt",sep='\t', header = TRUE)
+
+```
+
+## Experiment summary & quantification
+
+```{r}
+samples <- read.table("samples.txt",sep='\t', header = TRUE)
+to_drop <- c("BIOMATERIAL_PROVIDER","BIOMATERIAL_PROVIDER","Center.Name","DATASTORE.provider", "Consent", "Bytes", "DATASTORE.filetype", "DATASTORE.region", "LibrarySelection", "Collection_Date", "geo_loc_name_country", "geo_loc_name_country_continent", "geo_loc_name","Assay.Type","BioSampleModel","Instrument", "Platform", "Organism", "version", "SRA.Study")
+columns_to_keep <- setdiff(names(samples), to_drop)
+samples <- samples %>% dplyr::select(all_of(columns_to_keep)) |> filter(LibrarySource =="TRANSCRIPTOMIC")
+
+samples$tissue <- gsub("tibialis anterior \\(TA\\)", "TA", samples$tissue)
+samples$tissue <- gsub("vastus lateralis \\(VL\\)", "VL", samples$tissue)
+
+samples$tissue <- as.factor(samples$tissue)
+samples$health_state <- as.factor(samples$health_state)
+samples$sex <- as.factor(samples$sex)
+samples$BulkRNAseq_sequencing_batch <- as.factor(samples$BulkRNAseq_sequencing_batch)
+
+
+```
+
+
+```{r, cache=TRUE}
+samples_healthy <- samples |> dplyr::filter(health_state == 'healthy')
+samples_healthy$isolate <- as.factor(samples_healthy$isolate)
+
+files <- file.path("quants", samples_healthy$Run, "quant.sf")
+names(files) <- paste0(samples_healthy$Run)
+txi.healthy <- tximport(files, type = "salmon", tx2gene = tx2gene)
+head(txi.healthy$counts,3)
+```
+
+
+
+## Run DESeq2
+
+```{r}
+samples_healthy$BulkRNAseq_RNA_integrity_number <- scale(samples_healthy$BulkRNAseq_RNA_integrity_number)
+
+ddsTxi <- DESeqDataSetFromTximport(txi.healthy,
+                                   colData = samples_healthy,
+                                   design = ~ tissue  + BulkRNAseq_sequencing_batch + isolate)
+keep <- rowSums(counts(ddsTxi)) > 27
+```
+
+
+```{r}
+ddsTxi <- ddsTxi[keep,]
+
+
+```
+```{r}
+dds <- DESeq(ddsTxi)
+res <- results(dds, contrast= c('tissue','TA',"VL"))
+```
+```{r}
+saveRDS(dds, 'dds_helathy.RDS')
+```
+
+
+```{r}
+summary(res)
+res <- res[order(-abs(res$log2FoldChange)), ]
+resDF <- as.data.frame(res)
+resDF <- dplyr::as_tibble(resDF, rownames = "ensembl_gene_id")
+
+resFiltered <- resDF %>% dplyr::filter(abs(log2FoldChange)>1, padj<0.05)
+
+```
+
+## Graphical inspection
+
+```{r}
+plotDispEsts(dds, main="Dispersion plot")
+```
+```{r, cache =TRUE}
+rld <- rlogTransformation(dds)
+head(assay(rld))
+```
+
+```{r}
+mycols <- brewer.pal(8, "Dark2")[1:length(unique(samples_healthy$tissue))]
+mycols2 <- brewer.pal(8, "Set3")[1:length(unique(samples_healthy$sex))]
+
+sampleDists <- as.matrix(dist(t(assay(rld))))
+heatmap.2(as.matrix(sampleDists), key=F, trace="none",
+          col=colorpanel(100, "black", "white"),
+          ColSideColors=mycols[samples_healthy$tissue],
+          RowSideColors=mycols2[samples_healthy$sex],
+          margin=c(10, 10), main="Sample Distance Matrix")
+legend(x=-0.03,y=1.1, legend = levels(samples_healthy$tissue), fill = mycols, title = "Categories",bty='n')
+legend(x=0.07,y=1.1, legend = levels(samples_healthy$sex), fill = mycols2, title = "Categories",bty='n')
+
+```
+```{r}
+df <- as.data.frame(colData(dds)[,c("tissue", "sex")])
+
+pheatmap(as.matrix(sampleDists), annotation_col=df, annotation_row = df)
+
+```
+
+
+```{r}
+selected <- order(rowMeans(counts(dds,normalized=TRUE)),
+                decreasing=TRUE)[1:20]
+df <- as.data.frame(colData(dds)[,c("tissue", "sex")])
+pheatmap(assay(rld)[selected,], cluster_rows=FALSE, show_rownames=TRUE,
+         cluster_cols=FALSE, annotation_col=df)
+```
+
+```{r}
+DESeq2::plotPCA(rld, intgroup=c("tissue"))
+```
+```{r}
+pcaData <- plotPCA(rld, intgroup=c("tissue",'sex'), returnData=TRUE)
+pcaData$isolate <- rld@colData@listData$isolate
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+```
+```{r}
+ggplot(pcaData, aes(PC1, PC2, color=tissue, shape=sex, label= str_sub(isolate, -2, -1))) +
+  geom_point(size=3) +
+    geom_path(aes(group = str_sub(isolate, -2, -1))) +
+  geom_text_repel(aes(label=str_sub(isolate, -2, -1)), size=3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+  coord_fixed() +
+  theme_minimal()
+```
+
+
+
+
+```{r}
+# hist(res$pvalue, breaks=50, col="grey")
+# DESeq2::plotMA(dds, ylim=c(-1,1))
+# 
+# # Volcano plot
+# with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-2.5,2)))
+# with(subset(res, padj<.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+```
+
+```{r}
+fig <- plot_ly(x = res$pvalue, type = "histogram")
+fig <- fig %>% layout(title = "Histogram of p-values",
+                     xaxis = list(title = "Value"),
+                     yaxis = list(title = "Frequency"))
+fig
+
+```
+
+```{r}
+easyMAplot(res, output_shiny=FALSE)
+```
+
+
+```{r, cache =TRUE}
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+```
+
+
+```{r}
+res <- res[order(-abs(res$log2FoldChange)), ]
+resDF <- as.data.frame(res)
+resFiltered <- resDF %>% dplyr::filter(padj<0.05)
+universe <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id_version", tx2gene$GENEID, ensembl)
+
+resFiltered$ensembl_gene_id <- gsub("\\.\\d+$", "", row.names(resFiltered))
+gene_info <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id", resFiltered$ensembl_gene_id, ensembl) |> group_by(ensembl_gene_id) |> dplyr::slice_head(n = 1) |>  ungroup()
+resFiltered <- resFiltered %>%
+  left_join(gene_info, by = "ensembl_gene_id")
+
+```
+
+
+
+```{r}
+top_peaks <- as.data.frame(head(resFiltered,10)) 
+a <- list()
+for (i in seq_len(nrow(top_peaks))) {
+  m <- top_peaks[i, ]
+  annot = ifelse(m[["hgnc_symbol"]]=="", "novel", m[["hgnc_symbol"]])
+  ax <- sample(c(-1, 1), 1) * runif(1, 5, 60)
+  ay <- sample(c(-1, 1), 1) * runif(1, 5, 40)
+  a[[i]] <- list(
+    x = m[["log2FoldChange"]],
+    y = -log10(m[["pvalue"]]),
+    text = annot,
+    xref = "x",
+    yref = "y",
+    showarrow = TRUE,
+    arrowhead = 0.5,
+    ax = ax,
+    ay = ay
+  )
+}
+```
+
+
+
+```{r}
+easyVolcano(res, fccut = 2, output_shiny=FALSE) %>%   layout(annotations = a)
+```
+
+
+
+
+
+```{r}
+data(kegg.sets.hs)
+data(sigmet.idx.hs)
+kegg.sets.hs <- kegg.sets.hs[sigmet.idx.hs]
+```
+
+```{r}
+foldchanges <- resFiltered$log2FoldChange
+names(foldchanges) <- resFiltered$entrezgene_id
+keggres <- gage(foldchanges, gsets=kegg.sets.hs, same.dir=FALSE)
+lapply(keggres, head)
+
+```
+
+```{r}
+keggrespathwaysUp <- data.frame(id=rownames(keggres$greater), keggres$greater) %>%
+  tibble::as_tibble() %>%
+  dplyr::filter(row_number()<=6) %>%
+  .$id %>%
+  as.character()
+keggrespathwaysUp
+keggresids <- substr(c(keggrespathwaysUp), start=1, stop=8)
+keggresids
+```
+```{r}
+plot_pathway <- function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="hsa", new.signature=FALSE)
+#detach("package:dplyr", unload=T)
+tmp <- sapply(keggresids, function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="hsa"))
+```
+
+
+```{r}
+resDF <- resDF %>% mutate(diffexpressed = dplyr::case_when(
+  log2FoldChange > 0 & padj < 0.05 ~ 'UP',
+  log2FoldChange < 0 & padj < 0.05 ~ 'DOWN',
+  padj > 0.05 ~ 'NO'
+))
+```
+
+
+
+
+
+
+
+
+```{r}
+original_gene_list <- resDF$log2FoldChange
+names(original_gene_list) <- gsub("\\.\\d+$", "", row.names(resDF))
+gene_list<-na.omit(original_gene_list)
+gene_list = sort(gene_list, decreasing = TRUE)
+
+```
+
+```{r, cache = TRUE}
+gse <- gseGO(geneList=gene_list, 
+             ont ="ALL", 
+             keyType = "ENSEMBL", 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = org.Hs.eg.db, 
+             pAdjustMethod = "none")
+```
+
+```{r}
+dotplot(gse, showCategory=10, font.size=7, split=".sign") + facet_grid(.~.sign)
+
+```
+```{r}
+#emapplot(gse, showCategory = 10)
+
+```
+
+
+```{r}
+websiteLive <- getOption("enrichR.live")
+if (websiteLive) {
+    listEnrichrSites()
+    setEnrichrSite("Enrichr") # Human genes   
+}
+```
+
+```{r}
+if (websiteLive) dbs <- listEnrichrDbs()
+
+```
+
+```{r}
+dbs <- c("GO_Molecular_Function_2023", "GO_Cellular_Component_2023", "GO_Biological_Process_2023","GO_Molecular_Function_2018", "GO_Cellular_Component_2018", "GO_Biological_Process_2018")
+if (websiteLive) {
+    enriched <- enrichr(names(gene_list), dbs)
+}
+
+```
+
+
+```{r}
+df <- resDF |> tibble::rownames_to_column("ensembl_gene_id") |> dplyr::filter(padj<0.05)
+up_regulated <- df |> dplyr::filter(log2FoldChange > 0) |>   dplyr::mutate(ensembl_gene_id = gsub("\\.\\d+$", "", ensembl_gene_id)) |> dplyr::select(ensembl_gene_id)
+write.table(up_regulated, 'up_ta_vl.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
+down_regulated <- df |> dplyr::filter(log2FoldChange < 0) |>   dplyr::mutate(ensembl_gene_id = gsub("\\.\\d+$", "", ensembl_gene_id)) |> dplyr::select(ensembl_gene_id)
+write.table(down_regulated, 'down_ta_vl.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+```
+
+```{r}
+# Choose databases
+dbs <- c("GO_Biological_Process_2021", "KEGG_2021_Human", "WikiPathways_2019_Human", "Jensen_DISEASES")
+genes <- names(gene_list)
+# Run enrichment analysis 
+enriched_results <- enrichr(genes, dbs)
+
+# Access results for a specific database
+go_results <- enriched_results[["GO_Biological_Process_2021"]]
+kegg_results <- enriched_results[["KEGG_2021_Human"]]
+head(kegg_results)
+head(go_results)
+
+```
+```{r}
+genes <- names(gene_list)
+```
+```{r}
+unvierse1 <- gsub("\\.\\d+$", "", row.names(resDF))
+unvierse2 <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id", unvierse1, ensembl) |> group_by(ensembl_gene_id) |> dplyr::slice_head(n = 1) |>  ungroup()
+```
+
+
+```{r}
+universe3 <- unvierse2$entrezgene_id
+```
+
+
+```{r}
+ego <- enrichGO(gene          = as.character(gene_info$entrezgene_id),
+                universe      = as.character(universe3),
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+head(ego)
+```
+
+
+
+```{r}
+egoDF <- ego@result
+```
+
+
+```{r}
+write.table(egoDF, 'BP_TA_VL.csv')
+```
+```{r}
+egoCC <- enrichGO(gene          = as.character(gene_info$entrezgene_id),
+                #universe      = as.character(universe$entrezgene_id),
+                OrgDb         = org.Hs.eg.db,
+                ont           = "CC",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.1,
+                readable      = TRUE)
+egoCCDF <- egoCC@result
+```
+```{r}
+write.table(egoCCDF, 'CC_TA_VL.csv')
+```
+
+
+```{r}
+ggo <- groupGO(gene     = as.character(gene_info$entrezgene_id),
+               OrgDb    = org.Hs.eg.db,
+               ont      = "BP",
+               level    = 4,
+               readable = TRUE)
+head(ggo)
+gggo <- ggo@result
+```
+
+```{r}
+w <- egoCCDF %>% filter(pvalue < 0.05) %>% select(c("ID","pvalue"))
+write.table(w, "table2.tsv",quote = FALSE, row.names = FALSE)
+```

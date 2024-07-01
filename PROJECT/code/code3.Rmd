@@ -1,0 +1,262 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r}
+library(Seurat)
+library(patchwork)
+library(granulator)
+library(DESeq2)
+library(dplyr)
+library(biomaRt)
+
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(cache.lazy=FALSE)
+
+```
+
+```{r, echo=FALSE, cache.lazy=FALSE}
+load("VLTA_seurat.Rdata")
+```
+
+```{r}
+VLTA_seurat[["percent.mt"]] <- PercentageFeatureSet(VLTA_seurat, pattern = "^MT-")
+VlnPlot(VLTA_seurat, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+```{r}
+VLTA_seurat <- FindVariableFeatures(VLTA_seurat, selection.method = "vst", nfeatures = 2000)
+
+top10 <- head(VariableFeatures(VLTA_seurat), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(VLTA_seurat)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+
+```
+
+```{r}
+Idents(VLTA_seurat) <- VLTA_seurat@meta.data$Cell_types_BROAD_v2
+DimPlot(VLTA_seurat, reduction = "tsne", split.by = "Muscle")
+```
+
+
+
+```{r}
+cell_types <- VLTA_seurat$Cell_types_BROAD_v2
+cell_types[1]
+```
+```{r}
+average_expression <- AggregateExpression (VLTA_seurat, return.seurat = FALSE)
+reference_matrix <- as.matrix(average_expression$RNA)
+
+```
+
+```{r}
+dds <-readRDS("dds_helathy.RDS")
+res <- results(dds, contrast= c('tissue','TA',"VL"))
+
+```
+```{r}
+res <- res[order(-abs(res$log2FoldChange)), ]
+resDF <- as.data.frame(res)
+resDF <- dplyr::as_tibble(resDF, rownames = "ensembl_gene_id")
+
+resFiltered <- resDF %>% dplyr::filter( padj<0.05)
+
+```
+
+
+```{r}
+dds <- estimateSizeFactors(dds)
+bulk_counts <- counts(dds, normalized = TRUE)
+
+```
+
+
+
+```{r}
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+```
+
+
+```{r}
+row.names(bulk_counts) <- gsub("\\.\\d+$", "", row.names(bulk_counts))
+gene_info <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id", row.names(bulk_counts), ensembl) |> group_by(ensembl_gene_id) |> dplyr::slice_head(n = 1) |>  ungroup()
+
+resFiltered$ensembl_gene_id <- gsub("\\.\\d+$", "", resFiltered$ensembl_gene_id)
+gene_info1 <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id", resFiltered$ensembl_gene_id, ensembl) |> group_by(ensembl_gene_id) |> dplyr::slice_head(n = 1) |>  ungroup()
+resFiltered <- resFiltered %>%
+  left_join(gene_info1, by = "ensembl_gene_id")
+
+```
+
+
+```{r}
+gene_info <- gene_info %>%  mutate(merged_column = ifelse(hgnc_symbol != "", hgnc_symbol, ensembl_gene_id))
+row.names(bulk_counts) <- gene_info$merged_column
+
+```
+```{r}
+common_rows <- intersect(rownames(bulk_counts), rownames(reference_matrix))
+
+```
+```{r}
+filtered_bulk <- bulk_counts[rownames(bulk_counts) %in% common_rows, ]
+filtered_seurat <-reference_matrix[rownames(reference_matrix) %in% common_rows,]
+```
+
+
+```{r}
+VLTA_seurat.markers <- FindAllMarkers(VLTA_seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+```
+# ```{r}
+# filtered_markers <- VLTA_seurat.markers # %>%
+#   #  group_by(cluster) %>%
+#   #  top_n(n = 20, wt = avg_log2FC)
+# 
+# ```
+# ```{r}
+# filtered_markers <- VLTA_seurat.markers  %>% filter(avg_log2FC > 5) |>
+#     group_by(cluster) %>%
+#     top_n(n = 5, wt = avg_log2FC)
+# df <- as.matrix(average_expression$RNA)
+# filtered_df <- reference_matrix[rownames(reference_matrix) %in% filtered_markers$gene, ]
+# 
+# pheatmap(filtered_df)
+# ```
+# ```{r}
+# filtered_bulk <- bulk_counts[rownames(bulk_counts) %in% filtered_markers$gene, ]
+# filtered_seurat <-reference_matrix[rownames(reference_matrix) %in% filtered_markers$gene,]
+# ```
+
+```{r}
+decon <- deconvolute(m = filtered_bulk, sigMatrix = filtered_seurat, methods = c('dtangle','nnls','ols','rls'))
+```
+```{r}
+proportions <- decon$proportions$dtangle_sig1
+proportions$tissue <- dds$tissue
+```
+
+
+```{r}
+library(tidyverse)
+proportions <- proportions |> tibble::rownames_to_column('sample')
+data_long <- proportions %>%
+  pivot_longer(cols = -c(sample, tissue), names_to = "cell_type", values_to = "count")
+
+head(data_long)
+
+```
+```{r}
+data_long %>% group_by(cell_type) %>% summarise(sum(count)) -> summarised_cell_proportions
+summarised_cell_proportions$percent <- summarised_cell_proportions$`sum(count)`/ sum(summarised_cell_proportions$`sum(count)`) *100
+```
+
+```{r}
+ggplot(data_long, aes(x = tissue, y = count, fill = tissue)) +
+  geom_boxplot() +
+  facet_wrap(~ cell_type, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Cell Type Content by Tissue", x = "Tissue", y = "Count")
+
+```
+
+
+```{r}
+resFiltered <- resFiltered %>%  mutate(ident = ifelse(hgnc_symbol != "", hgnc_symbol, ensembl_gene_id))
+common <- intersect(resFiltered$ident, rownames(reference_matrix))
+```
+
+```{r}
+VLTA_seurat.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+
+```
+```{r}
+head(resFiltered,50)
+```
+
+```{r}
+#DoHeatmap(VLTA_seurat, features = top10$gene, size = 3, angle=90) + NoLegend()
+
+```
+
+
+
+```{r}
+df <- resDF |> dplyr::filter(padj<0.05)
+up_regulated <- df |> dplyr::filter(log2FoldChange > 0) |>   dplyr::mutate(ensembl_gene_id = gsub("\\.\\d+$", "", ensembl_gene_id)) |> dplyr::select(ensembl_gene_id)
+down_regulated <- df |> dplyr::filter(log2FoldChange < 0) |>   dplyr::mutate(ensembl_gene_id = gsub("\\.\\d+$", "", ensembl_gene_id)) |> dplyr::select(ensembl_gene_id)
+```
+```{r}
+gene_info1 <- getBM(c("ensembl_gene_id","hgnc_symbol","entrezgene_id","description","entrezgene_description"), "ensembl_gene_id", resFiltered$ensembl_gene_id, ensembl) |> group_by(ensembl_gene_id) |> dplyr::slice_head(n = 1) |>  ungroup()
+resFiltered <- resFiltered %>%
+  left_join(gene_info1, by = "ensembl_gene_id")
+
+```
+
+```{r}
+gene_info1 <- gene_info1 %>%  mutate(ident = ifelse(hgnc_symbol != "", hgnc_symbol, ensembl_gene_id))
+```
+
+
+```{r}
+avg_expression <- AverageExpression(VLTA_seurat, features = gene_info1$ident, group.by = "Cell_types_BROAD_v2") 
+max_expression_celltype <- apply(avg_expression$RNA, 1, function(x) colnames(avg_expression$RNA)[which.max(x)])
+```
+```{r}
+count_table <- table(max_expression_celltype)
+print(count_table)
+```
+
+```{r}
+percentages <- (count_table / sum(count_table)) * 100
+print(percentages)
+
+```
+
+
+
+
+```{r}
+up_dmd <- read.table('up_DMD_healthy.txt')$V1
+down_dmd <- read.table('down_DMD_healthy.txt.txt')$V1
+down_ta <- read.table('down_ta_vl.txt')$V1
+up_ta <- read.table('up_ta_vl.txt')$V1
+dmd <- c(up_dmd,down_dmd)
+ta <- c(up_ta,down_ta)
+common <- intersect(dmd, ta)
+```
+
+
+```{r}
+updmd_downhealthy <- intersect(up_dmd,down_ta)
+downdmd_uphealthy <- intersect(down_dmd,up_ta)
+
+```
+
+```{r}
+print(length(common))
+print(length(updmd_downhealthy))
+print(length(downdmd_uphealthy))
+
+```
+
+
+```{r}
+cc_dmd <- read.table('CC_DMD_H.csv') %>% filter(p.adjust < 0.05)
+
+```
+
