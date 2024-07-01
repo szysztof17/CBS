@@ -1,0 +1,22 @@
+{
+    "read_files": "[ VL/SRR24750887_RNA_sequencing_of_Homo_sapiens_healthy_adult_vastus_lateralis_VL__1.fastq.gz, VL/SRR24750887_RNA_sequencing_of_Homo_sapiens_healthy_adult_vastus_lateralis_VL__2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 33118933,
+    "num_assigned_fragments": 33118933,
+    "num_frags_with_concordant_consistent_mappings": 31436170,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1784546,
+    "strand_mapping_bias": 0.000013646514370081828,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 429,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 31436170,
+    "SF": 682711,
+    "SR": 1101406,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

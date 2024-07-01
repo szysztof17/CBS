@@ -1,0 +1,12 @@
+{
+    "salmon_version": "1.10.3",
+    "index": "../salmon_index/",
+    "libType": "A",
+    "threads": "16",
+    "validateMappings": [],
+    "gcBias": [],
+    "output": "quants/SRR24750892",
+    "mates1": "VL/SRR24750892_RNA_sequencing_of_Homo_sapiens_healthy_adult_vastus_lateralis_VL__1.fastq.gz",
+    "mates2": "VL/SRR24750892_RNA_sequencing_of_Homo_sapiens_healthy_adult_vastus_lateralis_VL__2.fastq.gz",
+    "auxDir": "aux_info"
+}

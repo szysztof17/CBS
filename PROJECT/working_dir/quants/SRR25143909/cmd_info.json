@@ -1,0 +1,12 @@
+{
+    "salmon_version": "1.10.3",
+    "index": "../salmon_index/",
+    "libType": "A",
+    "threads": "16",
+    "validateMappings": [],
+    "gcBias": [],
+    "output": "quants/SRR25143909",
+    "mates1": "tryout/SRR25143909_RNA_sequencing_of_Homo_sapiens_DMD_tibialis_anterior_TA__1.fastq.gz",
+    "mates2": "tryout/SRR25143909_RNA_sequencing_of_Homo_sapiens_DMD_tibialis_anterior_TA__2.fastq.gz",
+    "auxDir": "aux_info"
+}

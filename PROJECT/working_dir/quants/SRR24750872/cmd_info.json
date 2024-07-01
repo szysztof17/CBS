@@ -1,0 +1,12 @@
+{
+    "salmon_version": "1.10.3",
+    "index": "../salmon_index/",
+    "libType": "A",
+    "threads": "16",
+    "validateMappings": [],
+    "gcBias": [],
+    "output": "quants/SRR24750872",
+    "mates1": "TA/SRR24750872_RNA_sequencing_of_Homo_sapiens_healthy_adult_tibialis_anterior_TA__1.fastq.gz",
+    "mates2": "TA/SRR24750872_RNA_sequencing_of_Homo_sapiens_healthy_adult_tibialis_anterior_TA__2.fastq.gz",
+    "auxDir": "aux_info"
+}

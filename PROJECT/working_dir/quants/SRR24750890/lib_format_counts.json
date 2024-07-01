@@ -1,0 +1,22 @@
+{
+    "read_files": "[ missed/TA/SRR24750890_RNA_sequencing_of_Homo_sapiens_healthy_adult_tibialis_anterior_TA__1.fastq.gz, missed/TA/SRR24750890_RNA_sequencing_of_Homo_sapiens_healthy_adult_tibialis_anterior_TA__2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 30541925,
+    "num_assigned_fragments": 30541925,
+    "num_frags_with_concordant_consistent_mappings": 26225521,
+    "num_frags_with_inconsistent_or_orphan_mappings": 4330197,
+    "strand_mapping_bias": 0.000022191630986883565,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 582,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 26225521,
+    "SF": 4063328,
+    "SR": 266287,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}
