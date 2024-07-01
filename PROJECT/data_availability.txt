@@ -1,0 +1,4 @@
+RNASeq (BioProject ID: PRJNA976807) downloaded from:
+https://www.ncbi.nlm.nih.gov/sra/PRJNA976807
+Seurat object downloaded from:
+https://www.synapse.org/#!Synapse:syn51794252/
